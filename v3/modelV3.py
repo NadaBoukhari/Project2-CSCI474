@@ -57,6 +57,10 @@ def GetR0DecayValues(R0FilePath):
     
     R0File = open(R0FilePath, "r")
     line1 = R0File.readline().strip()
+    if (line1 == ""):
+        print("The first line must contain information.")
+        return None
+    
     line1Values = ReadDecayLine(line1)
     if (line1Values == None):
         return None
@@ -117,7 +121,7 @@ def UpdateDefaultValues(defaultValues, arguments):
     argumentsDict = vars(arguments)
     for arg in argumentsDict:
         if argumentsDict[arg] is not None:
-            defaultValues[arg] = argumentsDict[arg]
+            defaultValues[arg.upper()] = argumentsDict[arg]
 
 # f is a func of time t and state y
 # y is the initial state, t is the time, h is the timestep
@@ -205,14 +209,13 @@ def f(defaultValues):
     InterventionAmt = 1 / 3
     #Time = 220 not used
     #Xmax = 110000 not used
-    dt = 1
     #P_SEVERE = 0.04
     duration = 7 * 12 * 1e10
     #seasonal_effect = 0 #not used
 
     interpolation_steps = 40
     steps = 320 * interpolation_steps
-    dt = dt / interpolation_steps
+    dt = 1 / interpolation_steps
     sample_step = interpolation_steps
 
     N = defaultValues["N"]
@@ -222,23 +225,16 @@ def f(defaultValues):
     P_SEVERE = defaultValues["PSEVERE"]
     DHospitalLag = defaultValues["HOSPITALLAG"]
     UseDecayingR0 = defaultValues["UseDecayingR0"]
-    R0FilePath = defaultValues["R0FilePath"] 
-
-    if (UseDecayingR0):
-        arrayOfR0s = GetR0DecayValues(R0FilePath)
-        if (arrayOfR0s == None):
-            exit()
   
     StartDate = datetime.datetime(2020, 1, 15)
     method = Integrators["RK4"]
     def f(t, x):
         nonlocal R0
         nonlocal UseDecayingR0
-        nonlocal arrayOfR0s
         if (UseDecayingR0):
             CurrentDate = toDate(StartDate, t)
             DifferenceInDays = CurrentDate - StartDate
-            R0 = arrayOfR0s[DifferenceInDays.days]
+            R0 = defaultValues["arrayOfR0s"][DifferenceInDays.days]
 
         # SEIR ODE
         if (t > InterventionTime and t < InterventionTime + duration):
@@ -248,7 +244,7 @@ def f(defaultValues):
         else:
             beta = R0 / D_infectious
 
-        a = 1 / D_incubation
+        alpha = 1 / D_incubation
         gamma = 1 / D_infectious
 
         S = x[0] # Susectable
@@ -267,8 +263,8 @@ def f(defaultValues):
         p_mild = 1 - P_SEVERE - CFR
 
         dS = -beta * I * S
-        dE = beta * I * S - a * E
-        dI = a * E - gamma * I
+        dE = beta * I * S - alpha * E
+        dI = alpha * E - gamma * I
         dMild = p_mild * gamma * I - (1 / D_recovery_mild) * Mild
         dSevere = p_severe * gamma * I - (1 / DHospitalLag) * Severe
         dSevere_H = (1 / DHospitalLag) * Severe - (1 / D_recovery_severe) * Severe_H
@@ -281,13 +277,13 @@ def f(defaultValues):
         return [
             dS,
             dE,
-            dI,
+            dI,         #2
             dMild,
             dSevere,
-            dSevere_H,
+            dSevere_H,  #5
             dFatal,
             dR_Mild,
-            dR_Severe,
+            dR_Severe,  #8
             dR_Fatal,
         ]
 
@@ -312,7 +308,7 @@ def f(defaultValues):
             "Sum": N * reduce((lambda a,b: a+b), v)
             })
         v = integrate(method, f, v, t, dt)
-        t += dt
+        t += dt #this may not be getting updated properly since integrate() is no longer nested within f()
         steps -= 1
 
     return P
@@ -332,39 +328,55 @@ def getTrace(data, name, metric):
     }
     return trace
 
+def WeightedAverageR0(values, percentages):
+    avg = 0
+    for key in values.keys():
+        avg += float(values[key] * percentages[key])
+    return avg
+
 def main():
-        # default values for variables that can be modified with command line arguments go here
+    # default values for variables that can be modified with command line arguments go here
     defaultValues = {
-        "N": 7800000,
+        "N": 226387,
         "I0": 1,
         "R0": 2.85,
         "CFR": 0.01,
         "PSEVERE": 0.04,
         "HOSPITALLAG": 8,
         "UseDecayingR0": False,
-        "R0FilePath": None
+        "arrayOfR0s": None,
     }
+
+    ageGroupsR0Values = {
+        "0-19": 0.8,
+        "19-40": 2.0,
+        "40-60": 1.3,
+        "60-80": 1.1,
+        "80+": 1.1
+    }
+
+    ageGroupPopulationPercentages = {
+        "0-19": 0.24,
+        "19-40": 0.3,
+        "40-60": 0.22,
+        "60-80": 0.2,
+        "80+": 0.04
+    }
+
     args = BetterCommandLineArgReader()
     UpdateDefaultValues(defaultValues, args)
 
     #Will be true if the -decay flag is present with a file path
     defaultValues["UseDecayingR0"] = args.decay is not None
     if (defaultValues["UseDecayingR0"]):
-        defaultValues["R0FilePath"] = args.decay
+        print("R0 value will decay")
+        defaultValues["arrayOfR0s"] = GetR0DecayValues(args.decay)
 
+    print(defaultValues)
     data = f(defaultValues)
     infectedPlotData = getTrace(data, "Infected, seasonal effect = 0", "Infected")
     infectedPlot = px.line(x=infectedPlotData["x"], y=infectedPlotData["y"], title=infectedPlotData["name"])
-
-    deadPlotData = getTrace(data, "Dead, seasonal effect = 0", "Dead")
-    deadPlot = px.line(x=deadPlotData["x"], y=deadPlotData["y"], title=deadPlotData["name"])
-
-    recoveredPlotData = getTrace(data, "Recovered Total, seasonal effect = 0", "RecoveredTotal")
-    recoveredPlot = px.line(x=recoveredPlotData["x"], y=recoveredPlotData["y"], title=recoveredPlotData["name"])
-
     infectedPlot.show()
-    #deadPlot.show()
-    #recoveredPlot.show()
 
 
 if __name__ == "__main__":
