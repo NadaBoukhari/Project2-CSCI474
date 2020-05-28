@@ -4,27 +4,13 @@ import datetime
 import math
 import plotly.express as px
 import sys
+import utility as Utility 
 from functools import reduce
 #RT is the same as R0 (R naught)
 #RT is the rate of transmission
 #If R0 is 2, then that person will give it to two other people
 #R0 ranges between 0.5 and 4        
 # If R0 < 1.2 there's not enough transmission that it doesn't spread
-
-def strType(xstr):
-        try:
-            int(xstr)
-            return 'int'
-        except:
-            try:
-                float(xstr)
-                return 'float'
-            except:
-                try:
-                    complex(xstr)
-                    return 'complex'
-                except:
-                    return 'str'
                     
 def toDate(startDate, days):
         # return new date beginning on Jan 1st 2020 + t
@@ -43,7 +29,7 @@ def ReadDecayLine(line):
         return None
     
     metricValues = lineValues[1].split("=")
-    if (len(metricValues) != 2 or metricValues[0] != "R0" or strType(metricValues[1]) != "float"):
+    if (len(metricValues) != 2 or metricValues[0] != "R0" or Utility.strType(metricValues[1]) != "float"):
         print(lineValues[1] + ": should be formatted as R0={float}")
         return None
 
@@ -111,7 +97,7 @@ def BetterCommandLineArgReader():
     parser.add_argument("-cfr", action="store", type=float)
     parser.add_argument("-psevere", action="store", type=float,
                         help="The probability that the infection is severe")
-    parser.add_argument("-hl", "--hospital_lag", action="store", type=int, 
+    parser.add_argument("-hl", action="store", type=int, dest="HOSPITALLAG",
                         help="The hospital lag")
     parser.add_argument("-decay", action="store", 
                         help="Indicate path to .txt file containing age groups and R0 values")
@@ -192,32 +178,23 @@ Integrators = {
 }
 
 def f(defaultValues):
-    #default values for the model
+    # default values for the model that cannot be changed via user input
     Time_to_death = 25
-    #logN = math.log(7e6) not used
-    #N = 7800000
-    #I0 = 1
-    #R0 = 2.5
     D_incubation = 5.0
     D_infectious = 3.0
     D_recovery_mild = 11.0
     D_recovery_severe = 21.0
-    #DHospitalLag = 8
     D_death = Time_to_death - D_infectious
-    #CFR = 0.01
     InterventionTime = 10000
     InterventionAmt = 1 / 3
-    #Time = 220 not used
-    #Xmax = 110000 not used
-    #P_SEVERE = 0.04
     duration = 7 * 12 * 1e10
-    #seasonal_effect = 0 #not used
 
     interpolation_steps = 40
     steps = 320 * interpolation_steps
     dt = 1 / interpolation_steps
     sample_step = interpolation_steps
 
+    # these parameters have default values, but can be modified via user input
     N = defaultValues["N"]
     I0 = defaultValues["I0"]
     R0 = defaultValues["R0"]
@@ -316,23 +293,27 @@ def f(defaultValues):
 def getTrace(data, name, metric):
     y = []
     x = []
+    metricsToRecord = ["Infected", "Exposed", "Hospital", "Dead", "RecoveredTotal"]
+    maxValues = {}
     for i in range (0, len(data)):
         y.append(data[i][metric])
         x.append(data[i]["Time"])
+        for key in data[i].keys():
+            if (key in metricsToRecord):
+                if (key not in maxValues or maxValues[key][0] < data[i][key]):
+                    maxValues[key] = [data[i][key], data[i]["Time"]]
+
+    for key in maxValues.keys():
+        print("{0}: {1} on day: ".format(key, int(maxValues[key][0])) + maxValues[key][1].strftime("%m/%d/%Y"))
 
     trace = {
     "x": x,
     'y': y,
     "type": "scatter",
     "name": name,
+    "maxValues": maxValues
     }
     return trace
-
-def WeightedAverageR0(values, percentages):
-    avg = 0
-    for key in values.keys():
-        avg += float(values[key] * percentages[key])
-    return avg
 
 def main():
     # default values for variables that can be modified with command line arguments go here
