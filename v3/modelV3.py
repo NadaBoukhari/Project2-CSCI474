@@ -4,27 +4,13 @@ import datetime
 import math
 import plotly.express as px
 import sys
+import utility as Utility 
 from functools import reduce
 #RT is the same as R0 (R naught)
 #RT is the rate of transmission
 #If R0 is 2, then that person will give it to two other people
 #R0 ranges between 0.5 and 4        
 # If R0 < 1.2 there's not enough transmission that it doesn't spread
-
-def strType(xstr):
-        try:
-            int(xstr)
-            return 'int'
-        except:
-            try:
-                float(xstr)
-                return 'float'
-            except:
-                try:
-                    complex(xstr)
-                    return 'complex'
-                except:
-                    return 'str'
                     
 def toDate(startDate, days):
         # return new date beginning on Jan 1st 2020 + t
@@ -43,7 +29,7 @@ def ReadDecayLine(line):
         return None
     
     metricValues = lineValues[1].split("=")
-    if (len(metricValues) != 2 or metricValues[0] != "R0" or strType(metricValues[1]) != "float"):
+    if (len(metricValues) != 2 or metricValues[0] != "R0" or Utility.strType(metricValues[1]) != "float"):
         print(lineValues[1] + ": should be formatted as R0={float}")
         return None
 
@@ -57,6 +43,10 @@ def GetR0DecayValues(R0FilePath):
     
     R0File = open(R0FilePath, "r")
     line1 = R0File.readline().strip()
+    if (line1 == ""):
+        print("The first line must contain information.")
+        return None
+    
     line1Values = ReadDecayLine(line1)
     if (line1Values == None):
         return None
@@ -107,7 +97,7 @@ def BetterCommandLineArgReader():
     parser.add_argument("-cfr", action="store", type=float)
     parser.add_argument("-psevere", action="store", type=float,
                         help="The probability that the infection is severe")
-    parser.add_argument("-hl", "--hospital_lag", action="store", type=int, 
+    parser.add_argument("-hl", action="store", type=int, dest="HOSPITALLAG",
                         help="The hospital lag")
     parser.add_argument("-decay", action="store", 
                         help="Indicate path to .txt file containing age groups and R0 values")
@@ -117,7 +107,7 @@ def UpdateDefaultValues(defaultValues, arguments):
     argumentsDict = vars(arguments)
     for arg in argumentsDict:
         if argumentsDict[arg] is not None:
-            defaultValues[arg] = argumentsDict[arg]
+            defaultValues[arg.upper()] = argumentsDict[arg]
 
 # f is a func of time t and state y
 # y is the initial state, t is the time, h is the timestep
@@ -188,33 +178,23 @@ Integrators = {
 }
 
 def f(defaultValues):
-    #default values for the model
+    # default values for the model that cannot be changed via user input
     Time_to_death = 25
-    #logN = math.log(7e6) not used
-    #N = 7800000
-    #I0 = 1
-    #R0 = 2.5
     D_incubation = 5.0
     D_infectious = 3.0
     D_recovery_mild = 11.0
     D_recovery_severe = 21.0
-    #DHospitalLag = 8
     D_death = Time_to_death - D_infectious
-    #CFR = 0.01
     InterventionTime = 10000
     InterventionAmt = 1 / 3
-    #Time = 220 not used
-    #Xmax = 110000 not used
-    dt = 1
-    #P_SEVERE = 0.04
     duration = 7 * 12 * 1e10
-    #seasonal_effect = 0 #not used
 
     interpolation_steps = 40
     steps = 320 * interpolation_steps
-    dt = dt / interpolation_steps
+    dt = 1 / interpolation_steps
     sample_step = interpolation_steps
 
+    # these parameters have default values, but can be modified via user input
     N = defaultValues["N"]
     I0 = defaultValues["I0"]
     R0 = defaultValues["R0"]
@@ -222,23 +202,16 @@ def f(defaultValues):
     P_SEVERE = defaultValues["PSEVERE"]
     DHospitalLag = defaultValues["HOSPITALLAG"]
     UseDecayingR0 = defaultValues["UseDecayingR0"]
-    R0FilePath = defaultValues["R0FilePath"] 
-
-    if (UseDecayingR0):
-        arrayOfR0s = GetR0DecayValues(R0FilePath)
-        if (arrayOfR0s == None):
-            exit()
   
     StartDate = datetime.datetime(2020, 1, 15)
     method = Integrators["RK4"]
     def f(t, x):
         nonlocal R0
         nonlocal UseDecayingR0
-        nonlocal arrayOfR0s
         if (UseDecayingR0):
             CurrentDate = toDate(StartDate, t)
             DifferenceInDays = CurrentDate - StartDate
-            R0 = arrayOfR0s[DifferenceInDays.days]
+            R0 = defaultValues["arrayOfR0s"][DifferenceInDays.days]
 
         # SEIR ODE
         if (t > InterventionTime and t < InterventionTime + duration):
@@ -248,7 +221,7 @@ def f(defaultValues):
         else:
             beta = R0 / D_infectious
 
-        a = 1 / D_incubation
+        alpha = 1 / D_incubation
         gamma = 1 / D_infectious
 
         S = x[0] # Susectable
@@ -267,8 +240,8 @@ def f(defaultValues):
         p_mild = 1 - P_SEVERE - CFR
 
         dS = -beta * I * S
-        dE = beta * I * S - a * E
-        dI = a * E - gamma * I
+        dE = beta * I * S - alpha * E
+        dI = alpha * E - gamma * I
         dMild = p_mild * gamma * I - (1 / D_recovery_mild) * Mild
         dSevere = p_severe * gamma * I - (1 / DHospitalLag) * Severe
         dSevere_H = (1 / DHospitalLag) * Severe - (1 / D_recovery_severe) * Severe_H
@@ -281,13 +254,13 @@ def f(defaultValues):
         return [
             dS,
             dE,
-            dI,
+            dI,         #2
             dMild,
             dSevere,
-            dSevere_H,
+            dSevere_H,  #5
             dFatal,
             dR_Mild,
-            dR_Severe,
+            dR_Severe,  #8
             dR_Fatal,
         ]
 
@@ -312,7 +285,7 @@ def f(defaultValues):
             "Sum": N * reduce((lambda a,b: a+b), v)
             })
         v = integrate(method, f, v, t, dt)
-        t += dt
+        t += dt #this may not be getting updated properly since integrate() is no longer nested within f()
         steps -= 1
 
     return P
@@ -320,51 +293,71 @@ def f(defaultValues):
 def getTrace(data, name, metric):
     y = []
     x = []
+    metricsToRecord = ["Infected", "Exposed", "Hospital", "Dead", "RecoveredTotal"]
+    maxValues = {}
     for i in range (0, len(data)):
         y.append(data[i][metric])
         x.append(data[i]["Time"])
+        for key in data[i].keys():
+            if (key in metricsToRecord):
+                if (key not in maxValues or maxValues[key][0] < data[i][key]):
+                    maxValues[key] = [data[i][key], data[i]["Time"]]
+
+    for key in maxValues.keys():
+        print("{0}: {1} on day: ".format(key, int(maxValues[key][0])) + maxValues[key][1].strftime("%m/%d/%Y"))
 
     trace = {
     "x": x,
     'y': y,
     "type": "scatter",
     "name": name,
+    "maxValues": maxValues
     }
     return trace
 
 def main():
-        # default values for variables that can be modified with command line arguments go here
+    # default values for variables that can be modified with command line arguments go here
     defaultValues = {
-        "N": 7800000,
+        "N": 226387,
         "I0": 1,
         "R0": 2.85,
         "CFR": 0.01,
         "PSEVERE": 0.04,
         "HOSPITALLAG": 8,
         "UseDecayingR0": False,
-        "R0FilePath": None
+        "arrayOfR0s": None,
     }
+
+    ageGroupsR0Values = {
+        "0-19": 0.8,
+        "19-40": 2.0,
+        "40-60": 1.3,
+        "60-80": 1.1,
+        "80+": 1.1
+    }
+
+    ageGroupPopulationPercentages = {
+        "0-19": 0.24,
+        "19-40": 0.3,
+        "40-60": 0.22,
+        "60-80": 0.2,
+        "80+": 0.04
+    }
+
     args = BetterCommandLineArgReader()
     UpdateDefaultValues(defaultValues, args)
 
     #Will be true if the -decay flag is present with a file path
     defaultValues["UseDecayingR0"] = args.decay is not None
     if (defaultValues["UseDecayingR0"]):
-        defaultValues["R0FilePath"] = args.decay
+        print("R0 value will decay")
+        defaultValues["arrayOfR0s"] = GetR0DecayValues(args.decay)
 
+    print(defaultValues)
     data = f(defaultValues)
     infectedPlotData = getTrace(data, "Infected, seasonal effect = 0", "Infected")
     infectedPlot = px.line(x=infectedPlotData["x"], y=infectedPlotData["y"], title=infectedPlotData["name"])
-
-    deadPlotData = getTrace(data, "Dead, seasonal effect = 0", "Dead")
-    deadPlot = px.line(x=deadPlotData["x"], y=deadPlotData["y"], title=deadPlotData["name"])
-
-    recoveredPlotData = getTrace(data, "Recovered Total, seasonal effect = 0", "RecoveredTotal")
-    recoveredPlot = px.line(x=recoveredPlotData["x"], y=recoveredPlotData["y"], title=recoveredPlotData["name"])
-
     infectedPlot.show()
-    #deadPlot.show()
-    #recoveredPlot.show()
 
 
 if __name__ == "__main__":
