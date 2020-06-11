@@ -235,15 +235,14 @@ def f(defaultValues):
         R_Severe = x[8] # Recovered
         R_Fatal = x[9] # Dead
 
-        p_severe = P_SEVERE
         p_fatal = CFR
         p_mild = 1 - P_SEVERE - CFR
 
         dS = -beta * I * S
-        dE = beta * I * S - alpha * E
+        dE = -dS - alpha * E
         dI = alpha * E - gamma * I
         dMild = p_mild * gamma * I - (1 / D_recovery_mild) * Mild
-        dSevere = p_severe * gamma * I - (1 / DHospitalLag) * Severe
+        dSevere = P_SEVERE * gamma * I - (1 / DHospitalLag) * Severe
         dSevere_H = (1 / DHospitalLag) * Severe - (1 / D_recovery_severe) * Severe_H
         dFatal = p_fatal * gamma * I - (1 / D_death) * Fatal
         dR_Mild = (1 / D_recovery_mild) * Mild
@@ -290,6 +289,15 @@ def f(defaultValues):
 
     return P
 
+def calculateR0():
+    r0Home = 0.25
+    r0Community = 2.55
+    NonPharmaceuticalIntervention = (1 - 0.5)
+    SDI = 0
+    SDI0 = 22
+    sdiEffect = math.floor((100-SDI)/(100-SDI0))**3
+    return r0Home + (r0Community * NonPharmaceuticalIntervention * sdiEffect)
+
 def getTrace(data, name, metric):
     y = []
     x = []
@@ -320,7 +328,7 @@ def main():
     defaultValues = {
         "N": 226387,
         "I0": 1,
-        "R0": 2.85,
+        "R0": calculateR0(),
         "CFR": 0.01,
         "PSEVERE": 0.04,
         "HOSPITALLAG": 8,
@@ -353,6 +361,7 @@ def main():
         print("R0 value will decay")
         defaultValues["arrayOfR0s"] = GetR0DecayValues(args.decay)
 
+    #defaultValues["R0"] = Utility.WeightedAverage(ageGroupsR0Values, ageGroupPopulationPercentages)
     print(defaultValues)
     data = f(defaultValues)
     infectedPlotData = getTrace(data, "Infected, seasonal effect = 0", "Infected")
